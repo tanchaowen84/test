@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>经典小游戏 - 扫雷</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --accent: #60a5fa;
+      --pause: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #1e293b, var(--bg));
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+      padding: 20px;
+    }
+    .app {
+      width: min(95vw, 640px);
+      background: rgba(17, 24, 39, 0.92);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #0b1220;
+      background: #cbd5e1;
+    }
+    .start { background: var(--ok); }
+    .pause { background: var(--pause); }
+    .restart { background: var(--accent); }
+    .stats {
+      margin-left: auto;
+      display: flex;
+      gap: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(9, 1fr);
+      gap: 4px;
+      background: #0b1220;
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      user-select: none;
+    }
+    .cell {
+      aspect-ratio: 1 / 1;
+      border: 0;
+      border-radius: 6px;
+      background: #334155;
+      color: #f8fafc;
+      font-weight: 700;
+      cursor: pointer;
+      min-height: 34px;
+    }
+    .cell:hover { filter: brightness(1.08); }
+    .cell.open { background: #1f2937; cursor: default; }
+    .cell.mine { background: #7f1d1d; }
+    .cell.flag { background: #1e3a8a; }
+    .status {
+      margin-top: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .status.win { color: var(--ok); }
+    .status.lose { color: var(--danger); }
+    .hint { margin-top: 8px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>💣 经典扫雷（Minesweeper）</h1>
+    <div class="toolbar">
+      <button id="startBtn" class="start">开始</button>
+      <button id="pauseBtn" class="pause">暂停</button>
+      <button id="restartBtn" class="restart">重开</button>
+      <div class="stats">
+        <span>地雷：<strong id="mineCount">10</strong></span>
+        <span>已插旗：<strong id="flagCount">0</strong></span>
+      </div>
+    </div>
+
+    <div id="board" aria-label="扫雷棋盘"></div>
+    <div id="status" class="status">点击“开始”后，左键翻开，右键插旗。</div>
+    <div class="hint">规则：翻开全部非雷格子即胜利；点到地雷即失败。暂停时不可操作。</div>
+  </main>
+
+  <script>
+    (() => {
+      const ROWS = 9;
+      const COLS = 9;
+      const MINES = 10;
+
+      const boardEl = document.getElementById('board');
+      const statusEl = document.getElementById('status');
+      const flagCountEl = document.getElementById('flagCount');
+      const mineCountEl = document.getElementById('mineCount');
+
+      const startBtn = document.getElementById('startBtn');
+      const pauseBtn = document.getElementById('pauseBtn');
+      const restartBtn = document.getElementById('restartBtn');
+
+      let board = [];
+      let started = false;
+      let paused = false;
+      let finished = false;
+      let flags = 0;
+
+      function setStatus(text, mode = '') {
+        statusEl.textContent = text;
+        statusEl.className = 'status' + (mode ? ` ${mode}` : '');
+      }
+
+      function makeEmptyBoard() {
+        board = Array.from({ length: ROWS }, () => Array.from({ length: COLS }, () => ({
+          mine: false,
+          open: false,
+          flag: false,
+          count: 0
+        })));
+      }
+
+      function placeMines() {
+        let placed = 0;
+        while (placed < MINES) {
+          const r = Math.floor(Math.random() * ROWS);
+          const c = Math.floor(Math.random() * COLS);
+          if (board[r][c].mine) continue;
+          board[r][c].mine = true;
+          placed++;
+        }
+      }
+
+      function inRange(r, c) {
+        return r >= 0 && r < ROWS && c >= 0 && c < COLS;
+      }
+
+      function neighbors(r, c) {
+        const list = [];
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const nr = r + dr;
+            const nc = c + dc;
+            if (inRange(nr, nc)) list.push([nr, nc]);
+          }
+        }
+        return list;
+      }
+
+      function calcCounts() {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (board[r][c].mine) continue;
+            board[r][c].count = neighbors(r, c).filter(([nr, nc]) => board[nr][nc].mine).length;
+          }
+        }
+      }
+
+      function floodOpen(r, c) {
+        const stack = [[r, c]];
+        while (stack.length) {
+          const [cr, cc] = stack.pop();
+          const cell = board[cr][cc];
+          if (cell.open || cell.flag) continue;
+          cell.open = true;
+          if (cell.count !== 0) continue;
+          for (const [nr, nc] of neighbors(cr, cc)) {
+            const n = board[nr][nc];
+            if (!n.open && !n.mine) stack.push([nr, nc]);
+          }
+        }
+      }
+
+      function revealAllMines() {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (board[r][c].mine) board[r][c].open = true;
+          }
+        }
+      }
+
+      function checkWin() {
+        let openedSafe = 0;
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const cell = board[r][c];
+            if (!cell.mine && cell.open) openedSafe++;
+          }
+        }
+        if (openedSafe === ROWS * COLS - MINES) {
+          finished = true;
+          setStatus('恭喜胜利：你已排除所有地雷区域！', 'win');
+        }
+      }
+
+      function render() {
+        boardEl.innerHTML = '';
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const cell = board[r][c];
+            const btn = document.createElement('button');
+            btn.className = 'cell';
+            btn.dataset.r = String(r);
+            btn.dataset.c = String(c);
+
+            if (cell.open) {
+              btn.classList.add('open');
+              if (cell.mine) {
+                btn.classList.add('mine');
+                btn.textContent = '💣';
+              } else if (cell.count > 0) {
+                btn.textContent = String(cell.count);
+              }
+            } else if (cell.flag) {
+              btn.classList.add('flag');
+              btn.textContent = '🚩';
+            }
+
+            boardEl.appendChild(btn);
+          }
+        }
+        flagCountEl.textContent = String(flags);
+        mineCountEl.textContent = String(MINES);
+      }
+
+      function resetGame() {
+        makeEmptyBoard();
+        placeMines();
+        calcCounts();
+        started = false;
+        paused = false;
+        finished = false;
+        flags = 0;
+        setStatus('点击“开始”后，左键翻开，右键插旗。');
+        render();
+      }
+
+      function openCell(r, c) {
+        const cell = board[r][c];
+        if (cell.open || cell.flag) return;
+        if (cell.mine) {
+          cell.open = true;
+          revealAllMines();
+          finished = true;
+          setStatus('游戏失败：踩到地雷了。点击“重开”再试。', 'lose');
+          render();
+          return;
+        }
+        floodOpen(r, c);
+        checkWin();
+        render();
+      }
+
+      function toggleFlag(r, c) {
+        const cell = board[r][c];
+        if (cell.open) return;
+        cell.flag = !cell.flag;
+        flags += cell.flag ? 1 : -1;
+        render();
+      }
+
+      boardEl.addEventListener('click', (e) => {
+        const target = e.target.closest('.cell');
+        if (!target || !started || paused || finished) return;
+        const r = Number(target.dataset.r);
+        const c = Number(target.dataset.c);
+        openCell(r, c);
+      });
+
+      boardEl.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const target = e.target.closest('.cell');
+        if (!target || !started || paused || finished) return;
+        const r = Number(target.dataset.r);
+        const c = Number(target.dataset.c);
+        toggleFlag(r, c);
+      });
+
+      startBtn.addEventListener('click', () => {
+        if (finished) return;
+        started = true;
+        paused = false;
+        setStatus('游戏进行中…');
+      });
+
+      pauseBtn.addEventListener('click', () => {
+        if (!started || finished) return;
+        paused = !paused;
+        setStatus(paused ? '已暂停：棋盘操作已锁定。' : '游戏进行中…');
+      });
+
+      restartBtn.addEventListener('click', resetGame);
+
+      resetGame();
+    })();
+  </script>
+</body>
+</html>
